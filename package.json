@@ -19,11 +19,9 @@
     "@radix-ui/react-slot": "^1.2.3",
     "@radix-ui/react-tooltip": "^1.2.8",
     "@xstate/react": "^6.0.0",
-    "ai": "^5.0.47",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^0.544.0",
-    "nanoid": "^5.1.5",
     "next": "15.5.3",
     "next-themes": "^0.4.6",
     "prosemirror-commands": "^1.7.1",
@@ -41,7 +39,6 @@
     "react-reconciler": "0.32.0",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.3.1",
-    "use-stick-to-bottom": "^1.1.1",
     "xstate": "^5.22.0"
   },
   "devDependencies": {

@@ -8,6 +8,7 @@ import { getHTMLFromState } from "@/lib/editor-store";
 import { useEditorState, useCursorPosition } from "@/lib/hooks";
 import { Skeleton } from "./ui/skeleton";
 import { toast } from "sonner";
+import { EditorState } from "prosemirror-state";
 
 import "prosemirror-view/style/prosemirror.css";
 
@@ -69,14 +70,24 @@ export function Editor() {
   const cursorPosition = useCursorPosition();
 
   const generateAIContent = useCallback(
-    async (prompt: string, contextBefore: string, contextAfter: string) => {
+    async (
+      prompt: string,
+      contextBefore: string,
+      contextAfter: string,
+      includeFullContext: boolean = false,
+      currentEditorState?: EditorState
+    ) => {
       try {
         appActor.send({ type: "START_STREAMING" });
 
-        const fullPrompt =
-          contextBefore || contextAfter
-            ? `Context before: "${contextBefore}"\n\nContext after: "${contextAfter}"\n\nTask: ${prompt}`
-            : prompt;
+        let fullPrompt = prompt;
+
+        if (includeFullContext && currentEditorState) {
+          const fullDocumentContent = getHTMLFromState(currentEditorState);
+          fullPrompt = `Full document content:\n\n${fullDocumentContent}\n\nTask: ${prompt}`;
+        } else if (contextBefore || contextAfter) {
+          fullPrompt = `Context before: "${contextBefore}"\n\nContext after: "${contextAfter}"\n\nTask: ${prompt}`;
+        }
 
         if (!sendMessage) {
           throw new Error("sendMessage is not available");
@@ -133,45 +144,43 @@ export function Editor() {
   useEffect(() => {
     const subscription = appActor.subscribe((state) => {
       if (state.matches("generating") && state.context.aiPrompt) {
-        if (!editorState) return;
+        if (!state.context.editorState) return;
 
-        const currentContent = editorState ? getHTMLFromState(editorState) : "";
+        const currentContent = getHTMLFromState(state.context.editorState);
         const contextBefore = currentContent.slice(
-          Math.max(0, cursorPosition - 500),
-          cursorPosition
+          Math.max(0, state.context.cursorPosition - 500),
+          state.context.cursorPosition
         );
         const contextAfter = currentContent.slice(
-          cursorPosition,
-          cursorPosition + 200
+          state.context.cursorPosition,
+          state.context.cursorPosition + 200
         );
 
-        generateAIContent(state.context.aiPrompt, contextBefore, contextAfter);
+        generateAIContent(
+          state.context.aiPrompt,
+          contextBefore,
+          contextAfter,
+          state.context.includeContext,
+          state.context.editorState
+        );
       }
     });
 
     return () => subscription.unsubscribe();
-  }, [appActor, generateAIContent, editorState, cursorPosition]);
+  }, [appActor, generateAIContent]);
 
   if (!editorState) {
     return <Skeleton className="h-[350px] w-full animate-caret-blink!" />;
   }
 
   return (
-    <div className="min-h-screen">
-      <div className="flex-1 flex flex-col bg-gray-50/30">
-        <div className="flex-1 p-6">
-          <div className="max-w-4xl mx-auto">
-            <ProseMirrorEditor
-              onChange={(editorState) => {
-                appActor.send({
-                  type: "UPDATE_EDITOR_STATE",
-                  editorState,
-                });
-              }}
-            />
-          </div>
-        </div>
-      </div>
-    </div>
+    <ProseMirrorEditor
+      onChange={(editorState) => {
+        appActor.send({
+          type: "UPDATE_EDITOR_STATE",
+          editorState,
+        });
+      }}
+    />
   );
 }

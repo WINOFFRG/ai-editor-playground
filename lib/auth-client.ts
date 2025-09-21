@@ -17,8 +17,6 @@ export function handleTokenAuth(): boolean {
           const url = new URL(window.location.href);
           url.searchParams.delete("token");
           window.history.replaceState({}, "", url.toString());
-
-          window.location.reload();
         } else {
           toast.error("Authentication Failed", {
             description: "Invalid token. Please check your authentication.",

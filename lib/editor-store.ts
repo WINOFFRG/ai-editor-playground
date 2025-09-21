@@ -17,69 +17,6 @@ export const schema = new Schema({
   marks: basicSchema.spec.marks,
 });
 
-export const createSlashCommandPlugin = (onSlashCommand?: () => void) => {
-  const slashCommandPluginKey = new PluginKey("slashCommand");
-
-  return new Plugin({
-    key: slashCommandPluginKey,
-    props: {
-      handleKeyDown: (view, event) => {
-        if (event.key === "/") {
-          const { state } = view;
-          const { selection } = state;
-          const { $from } = selection;
-
-          const textBefore = $from.nodeBefore?.textContent || "";
-          const isAtStartOfLine = $from.parentOffset === 0;
-          const isAfterWhitespace = /^\s*$/.test(textBefore);
-
-          if (isAtStartOfLine || isAfterWhitespace) {
-            onSlashCommand?.();
-
-            return true;
-          }
-        }
-        return false;
-      },
-    },
-  });
-};
-
-export const createEditorState = (
-  content: string = "",
-  onSlashCommand?: () => void
-): EditorState => {
-  const plugins = [
-    history(),
-    keymap({
-      "Mod-z": undo,
-      "Mod-y": redo,
-      "Mod-Shift-z": redo,
-      "Mod-b": toggleMark(schema.marks.strong),
-      "Mod-i": toggleMark(schema.marks.em),
-    }),
-    keymap(baseKeymap),
-    keymap(buildKeymap(schema)),
-    inputRules({ rules: [] }),
-    reactKeys(),
-    createSlashCommandPlugin(onSlashCommand),
-  ];
-
-  let doc;
-  if (content) {
-    const wrap = document.createElement("div");
-    wrap.innerHTML = content;
-    doc = PmDOMParser.fromSchema(schema).parse(wrap);
-  }
-
-  return EditorState.create({
-    schema,
-    doc,
-    plugins,
-  });
-};
-
-// Helper function to get HTML from editor state
 export const getHTMLFromState = (state: EditorState): string => {
   const fragment = DOMSerializer.fromSchema(schema).serializeFragment(
     state.doc.content
@@ -104,6 +41,7 @@ export const editorMachine = createMachine({
     aiSuggestion: "",
     isGenerating: false,
     isStreaming: false,
+    includeContext: false,
 
     // Error state
     error: null as string | null,
@@ -117,6 +55,7 @@ export const editorMachine = createMachine({
       aiSuggestion: string;
       isGenerating: boolean;
       isStreaming: boolean;
+      includeContext: boolean;
       error: string | null;
     },
     events: {} as
@@ -136,6 +75,7 @@ export const editorMachine = createMachine({
       | { type: "REJECT_SUGGESTION" }
       | { type: "CLEAR_AI_SUGGESTION" }
       | { type: "OPEN_SLASH_COMMAND" }
+      | { type: "TOGGLE_INCLUDE_CONTEXT" }
       | {
           type: "INITIALIZE_EDITOR";
           onSlashCommand?: () => void;
@@ -180,10 +120,55 @@ export const editorMachine = createMachine({
           actions: assign({
             editorState: ({ event }) => {
               console.log("INITIALIZE_EDITOR: Creating editor state");
-              return createEditorState(
-                event.content || "",
-                event.onSlashCommand
-              );
+
+              // Create slash command input rule
+              const slashCommandRule = {
+                match: /^\/(.*)$/,
+                handler: (
+                  state: any,
+                  match: any,
+                  start: number,
+                  end: number
+                ) => {
+                  if (event.onSlashCommand) {
+                    event.onSlashCommand();
+                    // Return a transaction that removes the slash character
+                    const tr = state.tr.delete(start, end);
+                    return tr;
+                  }
+                  return null;
+                },
+                inCode: false,
+                inCodeMark: false,
+              };
+
+              const plugins = [
+                history(),
+                keymap({
+                  "Mod-z": undo,
+                  "Mod-y": redo,
+                  "Mod-Shift-z": redo,
+                  "Mod-b": toggleMark(schema.marks.strong),
+                  "Mod-i": toggleMark(schema.marks.em),
+                }),
+                keymap(baseKeymap),
+                keymap(buildKeymap(schema)),
+                inputRules({ rules: [slashCommandRule] }),
+                reactKeys(),
+              ];
+
+              let doc;
+              if (event.content) {
+                const wrap = document.createElement("div");
+                wrap.innerHTML = event.content;
+                doc = PmDOMParser.fromSchema(schema).parse(wrap);
+              }
+
+              return EditorState.create({
+                schema,
+                doc,
+                plugins,
+              });
             },
           }),
         },
@@ -228,10 +213,21 @@ export const editorMachine = createMachine({
             error: null,
           }),
         },
+        TOGGLE_INCLUDE_CONTEXT: {
+          actions: assign({
+            includeContext: ({ context }) => !context.includeContext,
+          }),
+        },
       },
     },
     aiPromptOpen: {
       on: {
+        UPDATE_EDITOR_STATE: {
+          actions: assign({
+            editorState: ({ event }) => event.editorState,
+            cursorPosition: ({ event }) => event.editorState.selection.from,
+          }),
+        },
         CLOSE_AI_PROMPT: {
           target: "writing",
           actions: assign({
@@ -270,10 +266,21 @@ export const editorMachine = createMachine({
             error: null,
           }),
         },
+        TOGGLE_INCLUDE_CONTEXT: {
+          actions: assign({
+            includeContext: ({ context }) => !context.includeContext,
+          }),
+        },
       },
     },
     generating: {
       on: {
+        UPDATE_EDITOR_STATE: {
+          actions: assign({
+            editorState: ({ event }) => event.editorState,
+            cursorPosition: ({ event }) => event.editorState.selection.from,
+          }),
+        },
         START_STREAMING: {
           target: "streaming",
           actions: assign({
@@ -293,6 +300,12 @@ export const editorMachine = createMachine({
     },
     streaming: {
       on: {
+        UPDATE_EDITOR_STATE: {
+          actions: assign({
+            editorState: ({ event }) => event.editorState,
+            cursorPosition: ({ event }) => event.editorState.selection.from,
+          }),
+        },
         STREAM_CHUNK: {
           actions: assign({
             aiSuggestion: ({ context, event }) =>
