@@ -141,6 +141,7 @@ export const editorMachine = createMachine({
       | { type: "END_STREAMING" }
       | { type: "AI_ERROR"; error: string }
       | { type: "REJECT_SUGGESTION" }
+      | { type: "CLEAR_AI_SUGGESTION" }
       | { type: "OPEN_SLASH_COMMAND" }
       | {
           type: "INITIALIZE_EDITOR";
@@ -155,6 +156,13 @@ export const editorMachine = createMachine({
           actions: assign({
             editorState: ({ event }) => event.editorState,
             cursorPosition: ({ event }) => event.editorState.selection.from,
+          }),
+        },
+        CLEAR_AI_SUGGESTION: {
+          actions: assign({
+            aiSuggestion: "",
+            isStreaming: false,
+            error: null,
           }),
         },
         OPEN_AI_PROMPT: {
@@ -212,6 +220,16 @@ export const editorMachine = createMachine({
             aiPrompt: "",
           }),
         },
+        REJECT_SUGGESTION: {
+          target: "writing",
+          actions: assign({
+            aiPromptOpen: false,
+            aiSuggestion: "",
+            aiPrompt: "",
+            isStreaming: false,
+            error: null,
+          }),
+        },
       },
     },
     aiPromptOpen: {
@@ -237,29 +255,21 @@ export const editorMachine = createMachine({
             error: null,
           }),
         },
-        ACCEPT_SUGGESTION: {
+        CLEAR_AI_SUGGESTION: {
+          actions: assign({
+            aiSuggestion: "",
+            isStreaming: false,
+            error: null,
+          }),
+        },
+        REJECT_SUGGESTION: {
           target: "writing",
           actions: assign({
-            editorState: ({ context }) => {
-              console.log("CONTEXT ::", context);
-              if (!context.editorState) return context.editorState;
-
-              // Create new editor state with AI suggestion inserted
-              const currentContent = getHTMLFromState(context.editorState);
-              const cursorPos = context.cursorPosition;
-              const beforeCursor = currentContent.slice(0, cursorPos);
-              const afterCursor = currentContent.slice(cursorPos);
-              const newContent =
-                beforeCursor + context.aiSuggestion + afterCursor;
-
-              return createEditorState(newContent);
-            },
-            cursorPosition: ({ context }) => {
-              return context.cursorPosition + context.aiSuggestion.length;
-            },
             aiPromptOpen: false,
             aiSuggestion: "",
             aiPrompt: "",
+            isStreaming: false,
+            error: null,
           }),
         },
       },
@@ -302,6 +312,23 @@ export const editorMachine = createMachine({
           actions: assign({
             isStreaming: false,
             error: ({ event }) => event.error,
+          }),
+        },
+        REJECT_SUGGESTION: {
+          target: "writing",
+          actions: assign({
+            aiPromptOpen: false,
+            aiSuggestion: "",
+            aiPrompt: "",
+            isStreaming: false,
+            error: null,
+          }),
+        },
+        CLEAR_AI_SUGGESTION: {
+          actions: assign({
+            aiSuggestion: "",
+            isStreaming: false,
+            error: null,
           }),
         },
       },

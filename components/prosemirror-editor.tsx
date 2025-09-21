@@ -19,17 +19,31 @@ import { Bold, Italic, List, ListOrdered, Undo, Redo } from "lucide-react";
 import { schema } from "@/lib/editor-store";
 import { toggleMark, wrapIn } from "prosemirror-commands";
 import { undo, redo } from "prosemirror-history";
+import { AINotionPrompt } from "./ai-notion-prompt";
+import { Skeleton } from "./ui/skeleton";
+import { useSelector } from "@xstate/react";
+import { useAppActor } from "./provider";
 
 interface ProseMirrorEditorProps {
   editorState: EditorState | null;
   onChange?: (editorState: EditorState) => void;
   placeholder?: string;
-  className?: string;
+  aiPromptOpen?: boolean;
+  onCloseAIPrompt?: () => void;
+  onAIPromptSubmit?: (message: string) => void;
+  aiSuggestion?: string;
+  isStreaming?: boolean;
+  onAcceptSuggestion?: () => void;
+  onRejectSuggestion?: () => void;
 }
 
-// Toolbar component that uses the editor hooks
-function EditorToolbar({ editorState }: { editorState: EditorState | null }) {
-  // Toolbar commands using the new API
+function EditorToolbar() {
+  const appActor = useAppActor();
+  const editorState = useSelector(
+    appActor,
+    (state) => state.context.editorState
+  );
+
   const toggleBold = useEditorEventCallback((view) => {
     if (!view) return;
     const toggleBoldMark = toggleMark(schema.marks.strong);
@@ -198,7 +212,13 @@ export function ProseMirrorEditor({
   editorState,
   onChange,
   placeholder,
-  className = "",
+  aiPromptOpen = false,
+  onCloseAIPrompt,
+  onAIPromptSubmit,
+  aiSuggestion,
+  isStreaming = false,
+  onAcceptSuggestion,
+  onRejectSuggestion,
 }: ProseMirrorEditorProps) {
   // Handle state changes
   const handleDispatchTransaction = useCallback(
@@ -212,21 +232,29 @@ export function ProseMirrorEditor({
   );
 
   if (!editorState) {
-    return <div>Loading editor...</div>;
+    return <Skeleton className="h-[350px] w-full animate-caret-blink!" />;
   }
 
   return (
     <TooltipProvider>
-      <div
-        className={`bg-white rounded-lg border border-gray-200 shadow-sm hover:shadow-md transition-all duration-200 ${className}`}
-      >
-        {/* Editor */}
+      <div>
         <ProseMirror
           state={editorState}
           dispatchTransaction={handleDispatchTransaction}
         >
-          <EditorToolbar editorState={editorState} />
+          <EditorToolbar />
           <ProseMirrorDoc />
+          {aiPromptOpen && onCloseAIPrompt && onAIPromptSubmit && (
+            <AINotionPrompt
+              isOpen={aiPromptOpen}
+              onClose={onCloseAIPrompt}
+              onSubmit={onAIPromptSubmit}
+              aiSuggestion={aiSuggestion}
+              isStreaming={isStreaming}
+              onAcceptSuggestion={onAcceptSuggestion}
+              onRejectSuggestion={onRejectSuggestion}
+            />
+          )}
         </ProseMirror>
 
         <style jsx global>{`
