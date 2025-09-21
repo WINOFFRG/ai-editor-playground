@@ -7,140 +7,171 @@ import { useAppActor } from "./provider";
 import { getHTMLFromState } from "@/lib/editor-store";
 import { useEditorState, useCursorPosition } from "@/lib/hooks";
 import { Skeleton } from "./ui/skeleton";
+import { toast } from "sonner";
 
 import "prosemirror-view/style/prosemirror.css";
 
 export function Editor() {
-	const appActor = useAppActor();
+  const appActor = useAppActor();
 
-	const { sendMessage } = useChat({
-		onFinish: (options) => {
-			try {
-				const aiSuggestion = options.message.parts
-					.filter((part) => part.type === "text")
-					.map((part) => part.text)
-					.join("");
+  const { sendMessage } = useChat({
+    onFinish: (options) => {
+      try {
+        const aiSuggestion = options.message.parts
+          .filter((part) => part.type === "text")
+          .map((part) => part.text)
+          .join("");
 
-				appActor.send({ type: "STREAM_CHUNK", content: aiSuggestion });
-				appActor.send({ type: "END_STREAMING" });
-			} catch {
-				appActor.send({
-					type: "AI_ERROR",
-					error: "Failed to process AI response",
-				});
-			}
-		},
-		// TODO: Checked this doesn't https://github.com/vercel/ai/issues/8597
-		onData: (data) => {
-			try {
-				appActor.send({ type: "STREAM_CHUNK", content: data.data as string });
-			} catch {
-				appActor.send({
-					type: "AI_ERROR",
-					error: "Failed to process streaming data",
-				});
-			}
-		},
-		onError: (error) => {
-			appActor.send({ type: "AI_ERROR", error: error.message });
-		},
-	});
+        appActor.send({ type: "STREAM_CHUNK", content: aiSuggestion });
+        appActor.send({ type: "END_STREAMING" });
+      } catch {
+        appActor.send({
+          type: "AI_ERROR",
+          error: "Failed to process AI response",
+        });
+      }
+    },
+    // TODO: Checked this doesn't https://github.com/vercel/ai/issues/8597
+    onData: (data) => {
+      try {
+        appActor.send({ type: "STREAM_CHUNK", content: data.data as string });
+      } catch {
+        appActor.send({
+          type: "AI_ERROR",
+          error: "Failed to process streaming data",
+        });
+      }
+    },
+    onError: (error) => {
+      if (
+        error.message.includes("401") ||
+        error.message.includes("Authentication")
+      ) {
+        toast.error("Authentication Failed", {
+          description: "Invalid token. Please check your authentication.",
+        });
+      } else if (error.message.includes("500")) {
+        toast.error("AI Service Error", {
+          description:
+            "The AI service is currently unavailable. Please try again later.",
+        });
+      } else {
+        toast.error("AI Error", {
+          description: error.message,
+        });
+      }
 
-	const editorState = useEditorState();
-	const cursorPosition = useCursorPosition();
+      appActor.send({ type: "AI_ERROR", error: error.message });
+    },
+  });
 
-	const generateAIContent = useCallback(
-		async (prompt: string, contextBefore: string, contextAfter: string) => {
-			try {
-				appActor.send({ type: "START_STREAMING" });
+  const editorState = useEditorState();
+  const cursorPosition = useCursorPosition();
 
-				const fullPrompt =
-					contextBefore || contextAfter
-						? `Context before: "${contextBefore}"\n\nContext after: "${contextAfter}"\n\nTask: ${prompt}`
-						: prompt;
+  const generateAIContent = useCallback(
+    async (prompt: string, contextBefore: string, contextAfter: string) => {
+      try {
+        appActor.send({ type: "START_STREAMING" });
 
-				if (!sendMessage) {
-					throw new Error("sendMessage is not available");
-				}
+        const fullPrompt =
+          contextBefore || contextAfter
+            ? `Context before: "${contextBefore}"\n\nContext after: "${contextAfter}"\n\nTask: ${prompt}`
+            : prompt;
 
-				await sendMessage(
-					{ text: fullPrompt },
-					{
-						body: {
-							systemMessage:
-								"You are a helpful AI writing assistant. Help the user with their writing task. Provide clear, concise responses that directly address their request.",
-						},
-					},
-				);
+        if (!sendMessage) {
+          throw new Error("sendMessage is not available");
+        }
 
-				return null;
-			} catch (error) {
-				console.error("AI generation error:", error);
-				appActor.send({
-					type: "AI_ERROR",
-					error: error instanceof Error ? error.message : "Unknown error",
-				});
-				return null;
-			}
-		},
-		[appActor, sendMessage],
-	);
+        await sendMessage(
+          { text: fullPrompt },
+          {
+            body: {
+              systemMessage:
+                "You are a helpful AI writing assistant. Help the user with their writing task. Provide clear, concise responses that directly address their request.",
+            },
+          }
+        );
 
-	useEffect(() => {
-		if (!editorState) {
-			appActor.send({
-				type: "INITIALIZE_EDITOR",
-				content:
-					"Welcome to the AI-powered editor! This is a demo document. You can start typing here or use the slash command (/) to get AI suggestions.\n\nTry typing / to see AI commands!",
-				onSlashCommand: () => {
-					appActor.send({ type: "OPEN_SLASH_COMMAND" });
-				},
-			});
-		}
-	}, [editorState, appActor]);
+        return null;
+      } catch (error) {
+        console.error("AI generation error:", error);
 
-	useEffect(() => {
-		const subscription = appActor.subscribe((state) => {
-			if (state.matches("generating") && state.context.aiPrompt) {
-				if (!editorState) return;
+        if (error instanceof Error && error.message.includes("401")) {
+          toast.error("Authentication Failed", {
+            description: "Invalid token. Please check your authentication.",
+          });
+        } else {
+          toast.error("AI Generation Failed", {
+            description:
+              error instanceof Error ? error.message : "Unknown error",
+          });
+        }
 
-				const currentContent = editorState ? getHTMLFromState(editorState) : "";
-				const contextBefore = currentContent.slice(
-					Math.max(0, cursorPosition - 500),
-					cursorPosition,
-				);
-				const contextAfter = currentContent.slice(
-					cursorPosition,
-					cursorPosition + 200,
-				);
+        appActor.send({
+          type: "AI_ERROR",
+          error: error instanceof Error ? error.message : "Unknown error",
+        });
+        return null;
+      }
+    },
+    [appActor, sendMessage]
+  );
 
-				generateAIContent(state.context.aiPrompt, contextBefore, contextAfter);
-			}
-		});
+  useEffect(() => {
+    if (!editorState) {
+      appActor.send({
+        type: "INITIALIZE_EDITOR",
+        content:
+          "Welcome to the AI-powered editor! This is a demo document. You can start typing here or use the slash command (/) to get AI suggestions.\n\nTry typing / to see AI commands!",
+        onSlashCommand: () => {
+          appActor.send({ type: "OPEN_SLASH_COMMAND" });
+        },
+      });
+    }
+  }, [editorState, appActor]);
 
-		return () => subscription.unsubscribe();
-	}, [appActor, generateAIContent, editorState, cursorPosition]);
+  useEffect(() => {
+    const subscription = appActor.subscribe((state) => {
+      if (state.matches("generating") && state.context.aiPrompt) {
+        if (!editorState) return;
 
-	if (!editorState) {
-		return <Skeleton className="h-[350px] w-full animate-caret-blink!" />;
-	}
+        const currentContent = editorState ? getHTMLFromState(editorState) : "";
+        const contextBefore = currentContent.slice(
+          Math.max(0, cursorPosition - 500),
+          cursorPosition
+        );
+        const contextAfter = currentContent.slice(
+          cursorPosition,
+          cursorPosition + 200
+        );
 
-	return (
-		<div className="min-h-screen">
-			<div className="flex-1 flex flex-col bg-gray-50/30">
-				<div className="flex-1 p-6">
-					<div className="max-w-4xl mx-auto">
-						<ProseMirrorEditor
-							onChange={(editorState) => {
-								appActor.send({
-									type: "UPDATE_EDITOR_STATE",
-									editorState,
-								});
-							}}
-						/>
-					</div>
-				</div>
-			</div>
-		</div>
-	);
+        generateAIContent(state.context.aiPrompt, contextBefore, contextAfter);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, [appActor, generateAIContent, editorState, cursorPosition]);
+
+  if (!editorState) {
+    return <Skeleton className="h-[350px] w-full animate-caret-blink!" />;
+  }
+
+  return (
+    <div className="min-h-screen">
+      <div className="flex-1 flex flex-col bg-gray-50/30">
+        <div className="flex-1 p-6">
+          <div className="max-w-4xl mx-auto">
+            <ProseMirrorEditor
+              onChange={(editorState) => {
+                appActor.send({
+                  type: "UPDATE_EDITOR_STATE",
+                  editorState,
+                });
+              }}
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
