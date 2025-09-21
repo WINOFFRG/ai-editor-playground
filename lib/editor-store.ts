@@ -8,7 +8,6 @@ import { keymap } from "prosemirror-keymap";
 import { baseKeymap, toggleMark } from "prosemirror-commands";
 import { buildKeymap } from "prosemirror-example-setup";
 import { inputRules } from "prosemirror-inputrules";
-import { PluginKey } from "prosemirror-state";
 import { DOMParser as PmDOMParser, DOMSerializer } from "prosemirror-model";
 import { reactKeys } from "@handlewithcare/react-prosemirror";
 
@@ -26,24 +25,113 @@ export const getHTMLFromState = (state: EditorState): string => {
   return div.innerHTML;
 };
 
+export const parseHTMLToProseMirror = (htmlContent: string): any => {
+  try {
+    const tempDiv = document.createElement("div");
+    tempDiv.innerHTML = htmlContent;
+
+    const parser = PmDOMParser.fromSchema(schema);
+    const parsedDoc = parser.parse(tempDiv);
+
+    return parsedDoc;
+  } catch (error) {
+    console.warn("Failed to parse HTML content:", error);
+    return null;
+  }
+};
+
+const createSlashCommandRule = (onSlashCommand?: () => void) => ({
+  match: /^\/(.*)$/,
+  handler: (state: any, match: any, start: number, end: number) => {
+    if (onSlashCommand) {
+      onSlashCommand();
+      const tr = state.tr.delete(start, end);
+      return tr;
+    }
+    return null;
+  },
+  inCode: false,
+  inCodeMark: false,
+});
+
+const createEditorPlugins = (onSlashCommand?: () => void) => [
+  history(),
+  keymap({
+    "Mod-z": undo,
+    "Mod-y": redo,
+    "Mod-Shift-z": redo,
+    "Mod-b": toggleMark(schema.marks.strong),
+    "Mod-i": toggleMark(schema.marks.em),
+  }),
+  keymap(baseKeymap),
+  keymap(buildKeymap(schema)),
+  inputRules({ rules: [createSlashCommandRule(onSlashCommand)] }),
+  reactKeys(),
+];
+
+const createEditorDocument = (content?: string) => {
+  if (!content) return undefined;
+
+  const wrap = document.createElement("div");
+  wrap.innerHTML = content;
+  return PmDOMParser.fromSchema(schema).parse(wrap);
+};
+
+const createEditorState = (content?: string, onSlashCommand?: () => void) => {
+  const plugins = createEditorPlugins(onSlashCommand);
+  const doc = createEditorDocument(content);
+
+  return EditorState.create({
+    schema,
+    doc,
+    plugins,
+  });
+};
+
+const insertAISuggestion = (
+  editorState: EditorState,
+  aiSuggestion: string,
+  cursorPos: number
+) => {
+  const { tr } = editorState;
+
+  try {
+    const parsedDoc = parseHTMLToProseMirror(aiSuggestion);
+
+    if (parsedDoc && parsedDoc.content.size > 0) {
+      const fragment = parsedDoc.content;
+      tr.insert(cursorPos, fragment);
+    } else {
+      tr.insertText(aiSuggestion, cursorPos, cursorPos);
+    }
+  } catch (error) {
+    console.warn("Error parsing AI suggestion:", error);
+    tr.insertText(aiSuggestion, cursorPos, cursorPos);
+  }
+
+  return editorState.apply(tr);
+};
+
+const calculateNewCursorPosition = (
+  cursorPosition: number,
+  aiSuggestion: string
+) => {
+  const textLength = aiSuggestion.replace(/<[^>]*>/g, "").length;
+  return cursorPosition + textLength;
+};
+
 export const editorMachine = createMachine({
   id: "editor",
   initial: "writing",
   context: {
-    // Editor state
     cursorPosition: 0,
     editorState: null as EditorState | null,
-
     aiPromptOpen: false,
-
-    // AI state
     aiPrompt: "",
     aiSuggestion: "",
     isGenerating: false,
     isStreaming: false,
-    includeContext: false,
-
-    // Error state
+    includeContext: true,
     error: null as string | null,
   },
   types: {
@@ -61,10 +149,6 @@ export const editorMachine = createMachine({
     events: {} as
       | { type: "UPDATE_EDITOR_STATE"; editorState: EditorState }
       | { type: "ACCEPT_SUGGESTION" }
-      | {
-          type: "OPEN_AI_PROMPT";
-          prompt?: string;
-        }
       | { type: "CLOSE_AI_PROMPT" }
       | { type: "UPDATE_AI_PROMPT"; prompt: string }
       | { type: "GENERATE_AI_CONTENT" }
@@ -75,6 +159,7 @@ export const editorMachine = createMachine({
       | { type: "REJECT_SUGGESTION" }
       | { type: "CLEAR_AI_SUGGESTION" }
       | { type: "OPEN_SLASH_COMMAND" }
+      | { type: "CONTINUE_WRITING" }
       | { type: "TOGGLE_INCLUDE_CONTEXT" }
       | {
           type: "INITIALIZE_EDITOR";
@@ -98,17 +183,7 @@ export const editorMachine = createMachine({
             error: null,
           }),
         },
-        OPEN_AI_PROMPT: {
-          target: "aiPromptOpen",
-          actions: assign({
-            aiPromptOpen: true,
-            aiPrompt: ({ event }) => event.prompt || "",
-            aiSuggestion: "",
-            error: null,
-          }),
-        },
         OPEN_SLASH_COMMAND: {
-          target: "aiPromptOpen",
           actions: assign({
             aiPromptOpen: true,
             aiPrompt: "",
@@ -116,60 +191,18 @@ export const editorMachine = createMachine({
             error: null,
           }),
         },
+        CONTINUE_WRITING: {
+          actions: assign({
+            aiPromptOpen: true,
+            aiPrompt: "Continue writing from where I left off",
+            aiSuggestion: "",
+            error: null,
+          }),
+        },
         INITIALIZE_EDITOR: {
           actions: assign({
-            editorState: ({ event }) => {
-              console.log("INITIALIZE_EDITOR: Creating editor state");
-
-              // Create slash command input rule
-              const slashCommandRule = {
-                match: /^\/(.*)$/,
-                handler: (
-                  state: any,
-                  match: any,
-                  start: number,
-                  end: number
-                ) => {
-                  if (event.onSlashCommand) {
-                    event.onSlashCommand();
-                    // Return a transaction that removes the slash character
-                    const tr = state.tr.delete(start, end);
-                    return tr;
-                  }
-                  return null;
-                },
-                inCode: false,
-                inCodeMark: false,
-              };
-
-              const plugins = [
-                history(),
-                keymap({
-                  "Mod-z": undo,
-                  "Mod-y": redo,
-                  "Mod-Shift-z": redo,
-                  "Mod-b": toggleMark(schema.marks.strong),
-                  "Mod-i": toggleMark(schema.marks.em),
-                }),
-                keymap(baseKeymap),
-                keymap(buildKeymap(schema)),
-                inputRules({ rules: [slashCommandRule] }),
-                reactKeys(),
-              ];
-
-              let doc;
-              if (event.content) {
-                const wrap = document.createElement("div");
-                wrap.innerHTML = event.content;
-                doc = PmDOMParser.fromSchema(schema).parse(wrap);
-              }
-
-              return EditorState.create({
-                schema,
-                doc,
-                plugins,
-              });
-            },
+            editorState: ({ event }) =>
+              createEditorState(event.content, event.onSlashCommand),
           }),
         },
         ACCEPT_SUGGESTION: {
@@ -177,27 +210,17 @@ export const editorMachine = createMachine({
           actions: assign({
             editorState: ({ context }) => {
               if (!context.editorState) return context.editorState;
-
-              // Use ProseMirror's transaction system to insert text properly
-              const state = context.editorState;
-              const { tr } = state;
-              const cursorPos = context.cursorPosition;
-
-              // Insert the AI suggestion at the cursor position
-              tr.insertText(context.aiSuggestion, cursorPos, cursorPos);
-
-              // Apply the transaction to get the new state
-              const newState = state.apply(tr);
-
-              console.log(
-                "ACCEPT_SUGGESTION: Inserted text at position",
-                cursorPos
+              return insertAISuggestion(
+                context.editorState,
+                context.aiSuggestion,
+                context.cursorPosition
               );
-              return newState;
             },
-            cursorPosition: ({ context }) => {
-              return context.cursorPosition + context.aiSuggestion.length;
-            },
+            cursorPosition: ({ context }) =>
+              calculateNewCursorPosition(
+                context.cursorPosition,
+                context.aiSuggestion
+              ),
             aiPromptOpen: false,
             aiSuggestion: "",
             aiPrompt: "",
@@ -218,18 +241,7 @@ export const editorMachine = createMachine({
             includeContext: ({ context }) => !context.includeContext,
           }),
         },
-      },
-    },
-    aiPromptOpen: {
-      on: {
-        UPDATE_EDITOR_STATE: {
-          actions: assign({
-            editorState: ({ event }) => event.editorState,
-            cursorPosition: ({ event }) => event.editorState.selection.from,
-          }),
-        },
         CLOSE_AI_PROMPT: {
-          target: "writing",
           actions: assign({
             aiPromptOpen: false,
             aiPrompt: "",
@@ -247,28 +259,6 @@ export const editorMachine = createMachine({
           actions: assign({
             isGenerating: true,
             error: null,
-          }),
-        },
-        CLEAR_AI_SUGGESTION: {
-          actions: assign({
-            aiSuggestion: "",
-            isStreaming: false,
-            error: null,
-          }),
-        },
-        REJECT_SUGGESTION: {
-          target: "writing",
-          actions: assign({
-            aiPromptOpen: false,
-            aiSuggestion: "",
-            aiPrompt: "",
-            isStreaming: false,
-            error: null,
-          }),
-        },
-        TOGGLE_INCLUDE_CONTEXT: {
-          actions: assign({
-            includeContext: ({ context }) => !context.includeContext,
           }),
         },
       },

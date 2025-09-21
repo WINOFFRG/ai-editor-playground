@@ -10,7 +10,86 @@ import { Skeleton } from "./ui/skeleton";
 import { toast } from "sonner";
 import { EditorState } from "prosemirror-state";
 
-import "prosemirror-view/style/prosemirror.css";
+const extractAISuggestion = (message: any): string => {
+  return message.parts
+    .filter((part: any) => part.type === "text")
+    .map((part: any) => part.text)
+    .join("");
+};
+
+const handleAIError = (error: Error, appActor: any) => {
+  if (
+    error.message.includes("401") ||
+    error.message.includes("Authentication")
+  ) {
+    toast.error("Authentication Failed", {
+      description: "Invalid token. Please check your authentication.",
+    });
+  } else if (error.message.includes("500")) {
+    toast.error("AI Service Error", {
+      description:
+        "The AI service is currently unavailable. Please try again later.",
+    });
+  } else {
+    toast.error("AI Error", {
+      description: error.message,
+    });
+  }
+
+  appActor.send({ type: "AI_ERROR", error: error.message });
+};
+
+const buildFullPrompt = (
+  prompt: string,
+  contextBefore: string,
+  contextAfter: string,
+  includeFullContext: boolean,
+  currentEditorState?: EditorState
+): string => {
+  if (includeFullContext && currentEditorState) {
+    const fullDocumentContent = getHTMLFromState(currentEditorState);
+    return `Full document content:\n\n${fullDocumentContent}\n\nTask: ${prompt}`;
+  } else if (contextBefore || contextAfter) {
+    return `Context before: "${contextBefore}"\n\nContext after: "${contextAfter}"\n\nTask: ${prompt}`;
+  }
+  return prompt;
+};
+
+const handleGenerationError = (error: unknown, appActor: any) => {
+  console.error("AI generation error:", error);
+
+  if (error instanceof Error && error.message.includes("401")) {
+    toast.error("Authentication Failed", {
+      description: "Invalid token. Please check your authentication.",
+    });
+  } else {
+    toast.error("AI Generation Failed", {
+      description: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+
+  appActor.send({
+    type: "AI_ERROR",
+    error: error instanceof Error ? error.message : "Unknown error",
+  });
+};
+
+const getContextFromState = (
+  editorState: EditorState,
+  cursorPosition: number
+) => {
+  const currentContent = getHTMLFromState(editorState);
+  const contextBefore = currentContent.slice(
+    Math.max(0, cursorPosition - 500),
+    cursorPosition
+  );
+  const contextAfter = currentContent.slice(
+    cursorPosition,
+    cursorPosition + 200
+  );
+
+  return { contextBefore, contextAfter };
+};
 
 export function Editor() {
   const appActor = useAppActor();
@@ -18,11 +97,7 @@ export function Editor() {
   const { sendMessage } = useChat({
     onFinish: (options) => {
       try {
-        const aiSuggestion = options.message.parts
-          .filter((part) => part.type === "text")
-          .map((part) => part.text)
-          .join("");
-
+        const aiSuggestion = extractAISuggestion(options.message);
         appActor.send({ type: "STREAM_CHUNK", content: aiSuggestion });
         appActor.send({ type: "END_STREAMING" });
       } catch {
@@ -43,27 +118,7 @@ export function Editor() {
         });
       }
     },
-    onError: (error) => {
-      if (
-        error.message.includes("401") ||
-        error.message.includes("Authentication")
-      ) {
-        toast.error("Authentication Failed", {
-          description: "Invalid token. Please check your authentication.",
-        });
-      } else if (error.message.includes("500")) {
-        toast.error("AI Service Error", {
-          description:
-            "The AI service is currently unavailable. Please try again later.",
-        });
-      } else {
-        toast.error("AI Error", {
-          description: error.message,
-        });
-      }
-
-      appActor.send({ type: "AI_ERROR", error: error.message });
-    },
+    onError: (error) => handleAIError(error, appActor),
   });
 
   const editorState = useEditorState();
@@ -80,14 +135,13 @@ export function Editor() {
       try {
         appActor.send({ type: "START_STREAMING" });
 
-        let fullPrompt = prompt;
-
-        if (includeFullContext && currentEditorState) {
-          const fullDocumentContent = getHTMLFromState(currentEditorState);
-          fullPrompt = `Full document content:\n\n${fullDocumentContent}\n\nTask: ${prompt}`;
-        } else if (contextBefore || contextAfter) {
-          fullPrompt = `Context before: "${contextBefore}"\n\nContext after: "${contextAfter}"\n\nTask: ${prompt}`;
-        }
+        const fullPrompt = buildFullPrompt(
+          prompt,
+          contextBefore,
+          contextAfter,
+          includeFullContext,
+          currentEditorState
+        );
 
         if (!sendMessage) {
           throw new Error("sendMessage is not available");
@@ -105,23 +159,7 @@ export function Editor() {
 
         return null;
       } catch (error) {
-        console.error("AI generation error:", error);
-
-        if (error instanceof Error && error.message.includes("401")) {
-          toast.error("Authentication Failed", {
-            description: "Invalid token. Please check your authentication.",
-          });
-        } else {
-          toast.error("AI Generation Failed", {
-            description:
-              error instanceof Error ? error.message : "Unknown error",
-          });
-        }
-
-        appActor.send({
-          type: "AI_ERROR",
-          error: error instanceof Error ? error.message : "Unknown error",
-        });
+        handleGenerationError(error, appActor);
         return null;
       }
     },
@@ -146,14 +184,9 @@ export function Editor() {
       if (state.matches("generating") && state.context.aiPrompt) {
         if (!state.context.editorState) return;
 
-        const currentContent = getHTMLFromState(state.context.editorState);
-        const contextBefore = currentContent.slice(
-          Math.max(0, state.context.cursorPosition - 500),
+        const { contextBefore, contextAfter } = getContextFromState(
+          state.context.editorState,
           state.context.cursorPosition
-        );
-        const contextAfter = currentContent.slice(
-          state.context.cursorPosition,
-          state.context.cursorPosition + 200
         );
 
         generateAIContent(

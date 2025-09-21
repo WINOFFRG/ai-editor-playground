@@ -9,12 +9,21 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { Bold, Italic, List, ListOrdered, Undo, Redo } from "lucide-react";
+import {
+  Bold,
+  Italic,
+  List,
+  ListOrdered,
+  Undo,
+  Redo,
+  Sparkles,
+} from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { schema } from "@/lib/editor-store";
 import { toggleMark, wrapIn } from "prosemirror-commands";
 import { undo, redo } from "prosemirror-history";
 import { useEditorState } from "@/lib/hooks";
+import { useAppActor } from "./provider";
 
 function useMarkCommand(markType: MarkType) {
   return useEditorEventCallback((view) => {
@@ -86,6 +95,7 @@ function ToolbarButton({
 
 export function EditorToolbar() {
   const editorState = useEditorState();
+  const appActor = useAppActor();
 
   const toggleBold = useMarkCommand(schema.marks.strong);
   const toggleItalic = useMarkCommand(schema.marks.em);
@@ -96,6 +106,10 @@ export function EditorToolbar() {
 
   const isBoldActive = useIsMarkActive(editorState, schema.marks.strong);
   const isItalicActive = useIsMarkActive(editorState, schema.marks.em);
+
+  const handleContinueWriting = () => {
+    appActor.send({ type: "CONTINUE_WRITING" });
+  };
 
   return (
     <div className="rounded-t-sm bg-accent dark:bg-card/70 backdrop-blur-sm px-4 py-3 flex items-center justify-between">
@@ -143,6 +157,20 @@ export function EditorToolbar() {
             icon={<ListOrdered className="h-4 w-4 text-muted-foreground" />}
             tooltip="Numbered List"
           />
+        </div>
+
+        <Separator orientation="vertical" className="h-6 bg-border/60" />
+
+        <div className="flex items-center gap-1">
+          <Button
+            onClick={handleContinueWriting}
+            variant="ghost"
+            size="sm"
+            className="bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 h-9 px-3 transition-all duration-200"
+          >
+            <Sparkles className="h-4 w-4 mr-2" />
+            <span className="text-sm font-medium">Continue Writing</span>
+          </Button>
         </div>
       </div>
 

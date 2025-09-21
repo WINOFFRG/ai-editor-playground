@@ -48,6 +48,7 @@ export function AINotionPrompt({ className }: AINotionPromptProps) {
     suggestion: aiSuggestion,
     isStreaming,
     includeContext,
+    prompt: statePrompt,
   } = useAIPromptState();
   const editorViewRef = useRef<EditorView | null>(null);
 
@@ -61,13 +62,22 @@ export function AINotionPrompt({ className }: AINotionPromptProps) {
 
   useEffect(() => {
     if (isOpen) {
-      setPrompt("");
+      setPrompt(statePrompt || "");
 
       setTimeout(() => {
         textareaRef.current?.focus();
       }, 50);
     }
   }, [isOpen]);
+
+  useEffect(() => {
+    // TODO: Improve this heck in here, not cool
+    if (isOpen && statePrompt === "Continue writing from where I left off") {
+      setTimeout(() => {
+        handleSubmit({ text: statePrompt });
+      }, 200);
+    }
+  }, [isOpen, statePrompt]);
 
   useEditorEffect(
     (view) => {
@@ -80,8 +90,8 @@ export function AINotionPrompt({ className }: AINotionPromptProps) {
         const viewClientRect = view.dom.getBoundingClientRect();
 
         // DEV: The position weren't coming up correctly, so I just did random hit trial to setup the position
-        const relativeTop = viewClientRect.top + coords.top - 80;
-        const relativeLeft = viewClientRect.left + 10;
+        const relativeTop = viewClientRect.top + coords.top - 140;
+        const relativeLeft = viewClientRect.left + 20;
 
         const trigger = triggerRef.current;
 
@@ -177,12 +187,16 @@ export function AINotionPrompt({ className }: AINotionPromptProps) {
                 </div>
                 <div className="relative max-h-32 overflow-y-auto transition-all duration-300">
                   {(aiSuggestion || isStreaming) && (
-                    <p className="text-sm text-foreground whitespace-pre-wrap animate-in fade-in-0 slide-in-from-left-2 duration-500">
-                      {aiSuggestion}
-                      {isStreaming && (
-                        <span className="inline-block w-2 h-4 bg-primary ml-1 animate-pulse"></span>
-                      )}
-                    </p>
+                    <div
+                      className="ai-suggestion-content animate-in fade-in-0 slide-in-from-left-2 duration-500"
+                      dangerouslySetInnerHTML={{
+                        __html:
+                          aiSuggestion +
+                          (isStreaming
+                            ? '<span class="inline-block w-2 h-4 bg-primary ml-1 animate-pulse"></span>'
+                            : ""),
+                      }}
+                    />
                   )}
                   {!isStreaming && aiSuggestion && (
                     <Actions className="gap-0 py-1 justify-end animate-in slide-in-from-bottom-2 fade-in-0 duration-300 delay-200">

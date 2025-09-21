@@ -1,5 +1,6 @@
 import { Editor } from "@/components/editor";
 import { AppProvider } from "@/components/provider";
+import Link from "next/link";
 
 export default function Home() {
   return (
@@ -9,7 +10,10 @@ export default function Home() {
           <div className="flex-1 p-6">
             <Editor />
             <footer className="mt-4 text-muted-foreground text-xs font-medium">
-              😼 Made by @winoffrg
+              😼 Made by &nbsp;
+              <Link href="https://github.com/winoffrg" className="underline">
+                @winoffrg
+              </Link>
             </footer>
           </div>
         </div>
