@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
     const { messages }: { messages: UIMessage[] } = await request.json();
 
     const result = streamText({
-      model: azureProvider.chat("o4-mini"),
+      model: azureProvider.chat("gpt-4"),
       messages: convertToModelMessages(messages),
       temperature: 0.7,
     });
